@@ -14,6 +14,8 @@ function AppContent() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [chatMessages, setChatMessages] = useState<any[]>([])
   const [isLoadingChat, setIsLoadingChat] = useState(false)
+  const [hasUserLoggedIn, setHasUserLoggedIn] = useState(false)
+  const [isInitialLoad, setIsInitialLoad] = useState(true)
   const { user } = useAuth()
 
   // Load chat messages when a chat is selected
@@ -55,6 +57,29 @@ function AppContent() {
       loadChat(currentChatId)
     }
   }, [currentChatId, user])
+
+  // Handle user login - create new chat when user logs in
+  useEffect(() => {
+    if (isInitialLoad) {
+      // On initial load, don't create a new chat if user is already logged in
+      setIsInitialLoad(false)
+      if (user) {
+        setHasUserLoggedIn(true)
+      }
+      return
+    }
+
+    if (user && !hasUserLoggedIn) {
+      // User just logged in, create a new chat
+      const newChatId = `chat-${Date.now()}`
+      setCurrentChatId(newChatId)
+      setChatMessages([])
+      setHasUserLoggedIn(true)
+    } else if (!user && hasUserLoggedIn) {
+      // User logged out, reset the flag
+      setHasUserLoggedIn(false)
+    }
+  }, [user, hasUserLoggedIn, isInitialLoad])
 
   const handleSelectChat = (id: string) => {
     setCurrentChatId(id)
