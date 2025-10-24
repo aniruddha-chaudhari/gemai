@@ -33,10 +33,34 @@ A ChatGPT-like interface powered by Google Gemini AI, built with Next.js, Tailwi
 Create a `.env.local` file in the root directory:
 
 ```env
+# AI Configuration
 GOOGLE_GENERATIVE_AI_API_KEY="your-google-api-key"
+
+# Database (for message persistence)
+DATABASE_URL="your-neon-database-url"
+
+# Authentication Configuration
+BETTER_AUTH_URL="http://localhost:3000"
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
+
+# Google OAuth (for authentication)
+GOOGLE_CLIENT_ID="your-google-client-id"
+GOOGLE_CLIENT_SECRET="your-google-client-secret"
 ```
 
-### 3. Install Dependencies and Run
+### 3. Google OAuth Setup
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select existing one
+3. Enable Google+ API
+4. Go to "Credentials" → "Create Credentials" → "OAuth 2.0 Client IDs"
+5. Set application type to "Web application"
+6. Add authorized redirect URIs:
+   - For development: `http://localhost:3000/api/auth/callback/google`
+   - For production: `https://gemai.aniruddhadev.in/api/auth/callback/google`
+7. Copy the Client ID and Client Secret to your environment variables
+
+### 4. Install Dependencies and Run
 
 ```bash
 # Install dependencies
@@ -46,7 +70,7 @@ pnpm install
 pnpm dev
 ```
 
-### 4. Optional: Database Setup (for message persistence)
+### 5. Optional: Database Setup (for message persistence)
 
 If you want to save chat messages to a database:
 
@@ -62,6 +86,42 @@ If you want to save chat messages to a database:
    ```
 
 Open [http://localhost:3000](http://localhost:3000) to see the application.
+
+## Deployment to Vercel
+
+### 1. Environment Variables in Vercel
+
+Set these environment variables in your Vercel dashboard:
+
+```env
+# AI Configuration
+GOOGLE_GENERATIVE_AI_API_KEY="your-google-api-key"
+
+# Database
+DATABASE_URL="your-neon-database-url"
+
+# Authentication URLs (for production)
+BETTER_AUTH_URL="https://gemai.aniruddhadev.in"
+NEXT_PUBLIC_APP_URL="https://gemai.aniruddhadev.in"
+
+# Google OAuth
+GOOGLE_CLIENT_ID="your-google-client-id"
+GOOGLE_CLIENT_SECRET="your-google-client-secret"
+```
+
+### 2. Google OAuth Configuration
+
+Make sure to add your production domain to Google OAuth:
+- Go to [Google Cloud Console](https://console.cloud.google.com/)
+- Navigate to your OAuth 2.0 Client ID
+- Add `https://gemai.aniruddhadev.in/api/auth/callback/google` to authorized redirect URIs
+
+### 3. Deploy
+
+```bash
+# Deploy to Vercel
+vercel --prod
+```
 
 ## Usage
 

@@ -87,3 +87,4 @@ export function LoginPromptModal({ isOpen, onClose, onLogin }: LoginPromptModalP
     </div>
   )
 }
+

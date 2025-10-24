@@ -8,7 +8,7 @@ export const auth = betterAuth({
   database: prismaAdapter(prisma, {
     provider: "postgresql"
   }),
-  baseURL: process.env.BETTER_AUTH_URL || "http://localhost:3000",
+  baseURL: process.env.BETTER_AUTH_URL || (process.env.NODE_ENV === 'production' ? "https://gemai.aniruddhadev.in" : "http://localhost:3000"),
   emailAndPassword: {
     enabled: false,
     requireEmailVerification: false, // Set to true in production
