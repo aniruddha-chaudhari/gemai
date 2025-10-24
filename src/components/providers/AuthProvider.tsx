@@ -6,7 +6,7 @@ import type { User, Session } from '@/lib/auth'
 
 interface AuthContextType {
   user: User | null
-  session: Session | null
+  session: any | null
   isLoading: boolean
   signOut: () => Promise<void>
   signInWithGoogle: () => Promise<void>
@@ -16,7 +16,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
+  const [session, setSession] = useState<any | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
