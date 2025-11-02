@@ -98,16 +98,28 @@ export default function MarkdownMessage({ content, className = '', onDiagramErro
               }
               
               // Regular code highlighting
-              const highlightedCode = hljs.highlight(codeString, { language }).value
-              return (
-                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto">
-                  <code 
-                    className={`language-${language} hljs`}
-                    dangerouslySetInnerHTML={{ __html: highlightedCode }}
-                    {...props}
-                  />
-                </pre>
-              )
+              try {
+                const highlightedCode = hljs.highlight(codeString, { language }).value
+                return (
+                  <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto">
+                    <code 
+                      className={`language-${language} hljs`}
+                      dangerouslySetInnerHTML={{ __html: highlightedCode }}
+                      {...props}
+                    />
+                  </pre>
+                )
+              } catch (error) {
+                // Fallback for unknown languages
+                console.warn(`Unknown language: ${language}`, error)
+                return (
+                  <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto">
+                    <code className={`language-${language}`} {...props}>
+                      {codeString}
+                    </code>
+                  </pre>
+                )
+              }
             }
             return (
               <code className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-sm font-mono" {...props}>

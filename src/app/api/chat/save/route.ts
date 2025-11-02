@@ -4,6 +4,10 @@ import { google } from '@ai-sdk/google'
 import { generateObject } from 'ai'
 import { z } from 'zod'
 
+// Ensure this route is treated as dynamic
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 export async function POST(req: NextRequest) {
   try {
     const { chatId, messages, userId } = await req.json()
