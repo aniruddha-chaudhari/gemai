@@ -3,13 +3,18 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import hljs from 'highlight.js'
+import { DiagramRenderer } from './DiagramRenderer'
 
 interface MarkdownMessageProps {
   content: string
   className?: string
+  onDiagramError?: (error: string, code: string) => void
 }
 
-export default function MarkdownMessage({ content, className = '' }: MarkdownMessageProps) {
+export default function MarkdownMessage({ content, className = '', onDiagramError }: MarkdownMessageProps) {
+  // Debug: Log content to verify it's being received
+  console.log('📝 MarkdownMessage content:', content?.substring(0, 100))
+  
   return (
     <div className={`prose prose-sm max-w-none dark:prose-invert ${className}`}>
       <ReactMarkdown
@@ -19,7 +24,81 @@ export default function MarkdownMessage({ content, className = '' }: MarkdownMes
             const match = /language-(\w+)/.exec(className || '')
             if (!inline && match) {
               const language = match[1]
-              const highlightedCode = hljs.highlight(String(children).replace(/\n$/, ''), { language }).value
+              let codeString = String(children).replace(/\n$/, '').trim()
+              
+              // For Mermaid, clean up code to remove incomplete lines at the end
+              if (language === 'mermaid') {
+                // Remove any trailing incomplete node definitions (likely from streaming cutoff)
+                const lines = codeString.split('\n')
+                const validLines: string[] = []
+                
+                for (const line of lines) {
+                  const trimmed = line.trim()
+                  // Skip empty lines
+                  if (!trimmed) {
+                    validLines.push('')
+                    continue
+                  }
+                  
+                  // Stop at incomplete node definitions at the end (likely from streaming cutoff)
+                  // More aggressive check for incomplete nodes
+                  const hasOpenBracket = trimmed.includes('[')
+                  const hasCloseBracket = trimmed.includes(']')
+                  const hasOpenParen = trimmed.includes('(') && !trimmed.match(/\(\[|\[\(/)
+                  const hasCloseParen = trimmed.includes(')')
+                  const hasOpenBrace = trimmed.includes('{')
+                  const hasCloseBrace = trimmed.includes('}')
+                  
+                  // Stop if incomplete brackets/parentheses/braces (unless subgraph or comment)
+                  if (!trimmed.startsWith('subgraph') && !trimmed.startsWith('%%')) {
+                    if ((hasOpenBracket && !hasCloseBracket) ||
+                        (hasOpenParen && !hasCloseParen && !trimmed.match(/-->|%%/)) ||
+                        (hasOpenBrace && !hasCloseBrace)) {
+                      console.warn('⚠️ Skipping incomplete Mermaid node at end:', trimmed)
+                      break
+                    }
+                  }
+                  
+                  // Stop if connection is incomplete
+                  if (trimmed.includes('-->')) {
+                    const afterArrow = trimmed.split('-->')[1]?.trim()
+                    if (!afterArrow || 
+                        (!afterArrow.match(/^[A-Za-z_][A-Za-z0-9_]*\[|^[A-Za-z_][A-Za-z0-9_]*\(|^[A-Za-z_][A-Za-z0-9_]*\{|^[A-Za-z_][A-Za-z0-9_]*$/) &&
+                         !afterArrow.startsWith('|'))) {
+                      console.warn('⚠️ Skipping incomplete Mermaid connection at end:', trimmed)
+                      break
+                    }
+                  }
+                  
+                  validLines.push(line)
+                }
+                
+                codeString = validLines.join('\n').trim()
+                
+                // Only render if we have valid code
+                if (codeString) {
+                  console.log('🎨 Rendering Mermaid diagram:', codeString?.substring(0, 100))
+                  return <DiagramRenderer code={codeString} type="mermaid" language={language} onError={onDiagramError} />
+                } else {
+                  console.warn('⚠️ Mermaid code is empty after cleaning')
+                  return (
+                    <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-800 rounded-lg">
+                      <p className="text-sm text-yellow-800 dark:text-yellow-300">
+                        Waiting for complete diagram code...
+                      </p>
+                    </div>
+                  )
+                }
+              }
+              
+              // Render Markmap diagrams
+              if (language === 'markmap') {
+                console.log('🧠 Rendering Markmap diagram:', codeString?.substring(0, 100))
+                return <DiagramRenderer code={codeString} type="markmap" language={language} onError={onDiagramError} />
+              }
+              
+              // Regular code highlighting
+              const highlightedCode = hljs.highlight(codeString, { language }).value
               return (
                 <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto">
                   <code 

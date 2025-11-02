@@ -1,6 +1,7 @@
 'use client'
 
-import { X, Moon, Sun, Bell, Shield, Globe, User, Settings as SettingsIcon } from 'lucide-react'
+import { X, Moon, Sun, Bell, Shield, Globe, User, Settings as SettingsIcon, Database } from 'lucide-react'
+import { MemoryManagement } from './MemoryManagement'
 
 interface SettingsModalProps {
   isDarkMode: boolean
@@ -157,6 +158,16 @@ export function SettingsModal({ isDarkMode, onToggleDarkMode, onClose }: Setting
                   Change
                 </button>
               </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+              Memory Management
+            </h3>
+
+            <div className="bg-linear-to-br from-gray-50 to-white dark:from-gray-700/50 dark:to-gray-800/50 rounded-2xl p-4 border border-gray-200/50 dark:border-gray-600/50 shadow-sm hover:shadow-md transition-shadow duration-200">
+              <MemoryManagement />
             </div>
           </div>
         </div>

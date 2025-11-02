@@ -1,8 +1,8 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext } from 'react'
 import { authClient } from '@/lib/auth-client'
-import type { User, Session } from '@/lib/auth'
+import type { User } from '@/lib/auth'
 
 interface AuthContextType {
   user: User | null
@@ -15,48 +15,38 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [session, setSession] = useState<any | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  // Use Better Auth's built-in useSession hook
+  const { data: sessionData, isPending, refetch } = authClient.useSession()
 
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        const { data } = await authClient.getSession()
-        if (data) {
-          setUser(data.user)
-          setSession(data.session)
-        }
-      } catch (error) {
-        console.error('Auth initialization error:', error)
-      } finally {
-        setIsLoading(false)
-      }
-    }
-
-    initAuth()
-  }, [])
-
+  // Debug: Log auth state changes (remove in production)
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔐 Auth State:', {
+      isLoading: isPending,
+      hasUser: !!sessionData?.user,
+      userName: sessionData?.user?.name,
+      timestamp: new Date().toISOString()
+    })
+  }
 
   const signOut = async () => {
     await authClient.signOut()
-    setUser(null)
-    setSession(null)
+    // Session will automatically update via useSession hook
+    refetch()
   }
 
   const signInWithGoogle = async () => {
     await authClient.signIn.social({
       provider: 'google',
+      callbackURL: '/',
     })
   }
-
 
   return (
     <AuthContext.Provider
       value={{
-        user,
-        session,
-        isLoading,
+        user: sessionData?.user ?? null,
+        session: sessionData?.session ?? null,
+        isLoading: isPending,
         signOut,
         signInWithGoogle,
       }}

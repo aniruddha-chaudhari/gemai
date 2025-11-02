@@ -8,6 +8,9 @@ A ChatGPT-like interface powered by Google Gemini AI, built with Next.js, Tailwi
 - 💬 ChatGPT-like interface
 - 🎨 Beautiful UI with Tailwind CSS
 - 💾 Message persistence with Neon database
+- 🔐 Secure authentication with Better Auth
+- 🧠 Long-term memory with Supermemory (per-user isolation)
+- 🗑️ Memory management - view and delete stored memories
 - 🌙 Dark mode support
 - 📱 Responsive design
 
@@ -35,6 +38,7 @@ Create a `.env.local` file in the root directory:
 ```env
 # AI Configuration
 GOOGLE_GENERATIVE_AI_API_KEY="your-google-api-key"
+SUPERMEMORY_API_KEY="your-supermemory-api-key"
 
 # Database (for message persistence)
 DATABASE_URL="your-neon-database-url"
@@ -96,6 +100,7 @@ Set these environment variables in your Vercel dashboard:
 ```env
 # AI Configuration
 GOOGLE_GENERATIVE_AI_API_KEY="your-google-api-key"
+SUPERMEMORY_API_KEY="your-supermemory-api-key"
 
 # Database
 DATABASE_URL="your-neon-database-url"

@@ -1,9 +1,10 @@
 'use client'
 
-import { Search, Plus, Sparkles, MessageSquare, Settings, ChevronDown, ChevronRight, LogIn, LogOut, User, RefreshCw } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { Search, Plus, Sparkles, MessageSquare, Settings, ChevronDown, ChevronRight, LogIn, LogOut, User, RefreshCw, Trash2 } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './providers/AuthProvider'
 import { LoginModal } from './LoginModal'
+import { useChatHistory, useInvalidateChats } from '@/hooks/useChats'
 
 interface SidebarProps {
   isDarkMode: boolean
@@ -17,50 +18,85 @@ export function Sidebar({ isDarkMode, currentChatId, onNewChat, onSelectChat, on
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedSection, setExpandedSection] = useState<string | null>(null)
   const [showLoginModal, setShowLoginModal] = useState(false)
-  const [recentChats, setRecentChats] = useState<Array<{ id: string; title: string; date: string; preview: string }>>([])
-  const [loadingChats, setLoadingChats] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{ chatId: string; x: number; y: number } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
 
   const { user, signOut, isLoading } = useAuth()
+  
+  // Use React Query to fetch and cache chat history
+  const { data: chatData, isLoading: loadingChats, refetch: refetchChats } = useChatHistory(user?.id)
+  const { invalidateList } = useInvalidateChats()
+  
+  const recentChats = chatData?.chats || []
 
-  // Function to fetch chat history
-  const fetchChatHistory = async () => {
-    if (user) {
-      setLoadingChats(true)
-      try {
-        const response = await fetch(`/api/chat/history?userId=${user.id}`)
-        const data = await response.json()
-        if (data.chats) {
-          setRecentChats(data.chats)
-        }
-      } catch (error) {
-        console.error('Error fetching chat history:', error)
-      } finally {
-        setLoadingChats(false)
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(event.target as Node)) {
+        setContextMenu(null)
       }
-    } else {
-      setRecentChats([])
     }
-  }
 
-  // Fetch chat history when user is logged in
-  useEffect(() => {
-    fetchChatHistory()
-  }, [user])
+    if (contextMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [contextMenu])
 
-  // Refresh chat history when currentChatId changes (new chat created)
+  // Refresh chat list when currentChatId changes (new chat created)
+  // Only invalidate if it's a new chat that doesn't exist in the list yet
   useEffect(() => {
-    if (currentChatId && user) {
-      // Small delay to ensure the chat is saved before refreshing
-      const timeout = setTimeout(() => {
-        fetchChatHistory()
-      }, 1000)
+    if (currentChatId && user && currentChatId.startsWith('chat-')) {
+      const chatExists = recentChats.some((chat: any) => chat.id === currentChatId)
       
-      return () => clearTimeout(timeout)
+      // Only invalidate if this is a new chat not in the list
+      if (!chatExists) {
+        // Small delay to ensure the chat is saved before refreshing
+        const timeout = setTimeout(() => {
+          invalidateList(user.id)
+        }, 1500) // Increased to 1.5s to give DB time to save
+        
+        return () => clearTimeout(timeout)
+      }
     }
-  }, [currentChatId, user])
+  }, [currentChatId, user, invalidateList, recentChats])
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section)
+  }
+
+  const handleDeleteChat = async (chatId: string) => {
+    if (!user) return
+    
+    if (confirm('Are you sure you want to delete this chat?')) {
+      try {
+        const response = await fetch(`/api/chat/delete?chatId=${chatId}&userId=${user.id}`, {
+          method: 'DELETE',
+        })
+
+        if (response.ok) {
+          // Invalidate and refetch chat list from cache
+          invalidateList(user.id)
+          
+          // If deleted chat was current, create a new one
+          if (currentChatId === chatId) {
+            onNewChat()
+          }
+        } else {
+          alert('Failed to delete chat')
+        }
+      } catch (error) {
+        console.error('Error deleting chat:', error)
+        alert('Failed to delete chat')
+      }
+    }
+    
+    setContextMenu(null)
+  }
+
+  const handleContextMenu = (e: React.MouseEvent, chatId: string) => {
+    e.preventDefault()
+    setContextMenu({ chatId, x: e.clientX, y: e.clientY })
   }
 
   return (
@@ -112,7 +148,7 @@ export function Sidebar({ isDarkMode, currentChatId, onNewChat, onSelectChat, on
                 )}
               </button>
               <button
-                onClick={fetchChatHistory}
+                onClick={() => refetchChats()}
                 disabled={loadingChats}
                 className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
                 title="Refresh chats"
@@ -132,10 +168,11 @@ export function Sidebar({ isDarkMode, currentChatId, onNewChat, onSelectChat, on
                     <div className="text-xs text-gray-400 dark:text-gray-500">Start a new conversation to see your chats here</div>
                   </div>
                 ) : (
-                  recentChats.map((chat) => (
+                  recentChats.map((chat: any) => (
                     <button
                       key={chat.id}
                       onClick={() => onSelectChat(chat.id)}
+                      onContextMenu={(e) => handleContextMenu(e, chat.id)}
                       className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 group ${
                         currentChatId === chat.id ? 'bg-gray-100 dark:bg-gray-700' : ''
                       }`}
@@ -175,15 +212,14 @@ export function Sidebar({ isDarkMode, currentChatId, onNewChat, onSelectChat, on
                 </div>
               </div>
               
-              <div>
-                {/* Settings button hidden for now */}
-                {/* <button
+              <div className="space-y-2">
+                <button
                   onClick={onOpenSettings}
-                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 group"
+                  className="w-full flex items-center justify-start gap-2 px-4 py-2.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 group"
                 >
                   <Settings className="w-4 h-4 text-gray-400 group-hover:rotate-90 transition-transform duration-300" />
-                  <span className="text-sm text-gray-600 dark:text-gray-400">Settings</span>
-                </button> */}
+                  <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Settings</span>
+                </button>
                 
                 <button
                   onClick={signOut}
@@ -221,6 +257,26 @@ export function Sidebar({ isDarkMode, currentChatId, onNewChat, onSelectChat, on
         isOpen={showLoginModal} 
         onClose={() => setShowLoginModal(false)} 
       />
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 min-w-40"
+          style={{
+            left: `${contextMenu.x}px`,
+            top: `${contextMenu.y}px`,
+          }}
+        >
+          <button
+            onClick={() => handleDeleteChat(contextMenu.chatId)}
+            className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete chat
+          </button>
+        </div>
+      )}
     </aside>
   )
 }

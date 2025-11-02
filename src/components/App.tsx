@@ -1,62 +1,47 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
+import { nanoid } from 'nanoid'
 import { Sidebar } from './Sidebar'
 import { ChatView } from './ChatView'
 import { SettingsModal } from './SettingsModal'
 import { AuthProvider } from './providers/AuthProvider'
 import { useAuth } from './providers/AuthProvider'
+import { QueryProvider } from './providers/QueryProvider'
+import { useChat } from '@/hooks/useChats'
 
 function AppContent() {
   const [isDarkMode, setIsDarkMode] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
   const [currentChatId, setCurrentChatId] = useState<string | null>('default')
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
-  const [chatMessages, setChatMessages] = useState<any[]>([])
-  const [isLoadingChat, setIsLoadingChat] = useState(false)
   const [hasUserLoggedIn, setHasUserLoggedIn] = useState(false)
   const [isInitialLoad, setIsInitialLoad] = useState(true)
   const { user } = useAuth()
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
 
-  // Load chat messages when a chat is selected
-  const loadChat = async (chatId: string) => {
-    if (!user) {
-      // For non-authenticated users, clear messages (no chat history)
-      setChatMessages([])
-      return
-    }
+  // Use React Query to load chat data with caching
+  const { data: chatData, isLoading: isLoadingChat } = useChat(currentChatId, user?.id)
+  const chatMessages = chatData?.chat?.messages || []
 
-    setIsLoadingChat(true)
-    try {
-      const response = await fetch(`/api/chat/load?chatId=${chatId}&userId=${user.id}`)
-      
-      if (response.status === 404) {
-        // Chat not found, clear messages
-        setChatMessages([])
-        return
-      }
-      
-      const data = await response.json()
-      
-      if (data.chat && data.chat.messages) {
-        setChatMessages(data.chat.messages)
-      } else {
-        setChatMessages([])
-      }
-    } catch (error) {
-      console.error('Error loading chat:', error)
-      setChatMessages([])
-    } finally {
-      setIsLoadingChat(false)
-    }
-  }
-
-  // Load chat when currentChatId changes
+  // Initialize chat ID from URL on mount
   useEffect(() => {
-    if (currentChatId) {
-      loadChat(currentChatId)
+    const chatIdFromUrl = searchParams.get('chat')
+    if (chatIdFromUrl) {
+      setCurrentChatId(chatIdFromUrl)
     }
-  }, [currentChatId, user])
+  }, [searchParams]) // Run when URL changes
+
+  // Update URL when chat changes
+  useEffect(() => {
+    if (!isInitialLoad && currentChatId) {
+      const newUrl = currentChatId === 'default' ? '/' : `/?chat=${currentChatId}`
+      router.replace(newUrl, { scroll: false })
+    }
+  }, [currentChatId, isInitialLoad, router])
 
   // Handle user login - create new chat when user logs in
   useEffect(() => {
@@ -71,12 +56,12 @@ function AppContent() {
 
     if (user && !hasUserLoggedIn) {
       // User just logged in, create a new chat
-      const newChatId = `chat-${Date.now()}`
+      const newChatId = `chat-${nanoid()}`
       setCurrentChatId(newChatId)
-      setChatMessages([])
       setHasUserLoggedIn(true)
     } else if (!user && hasUserLoggedIn) {
-      // User logged out, reset the flag
+      // User logged out, reset to default chat
+      setCurrentChatId('default')
       setHasUserLoggedIn(false)
     }
   }, [user, hasUserLoggedIn, isInitialLoad])
@@ -86,13 +71,8 @@ function AppContent() {
   }
 
   const handleNewChat = () => {
-    const newChatId = `chat-${Date.now()}`
+    const newChatId = `chat-${nanoid()}`
     setCurrentChatId(newChatId)
-    setChatMessages([])
-    // Force clear messages by setting them to empty array
-    setTimeout(() => {
-      setChatMessages([])
-    }, 100)
   }
 
   return (
@@ -168,8 +148,10 @@ function AppContent() {
 
 export function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <QueryProvider>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </QueryProvider>
   )
 }

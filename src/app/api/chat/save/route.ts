@@ -8,33 +8,23 @@ export async function POST(req: NextRequest) {
   try {
     const { chatId, messages, userId } = await req.json()
 
-    console.log('=== SAVE API CALLED ===')
-    console.log('ChatId:', chatId)
-    console.log('UserId:', userId)
-    console.log('Messages count:', messages?.length)
-    console.log('Messages roles:', messages?.map((m: any) => m.role))
-
     if (!chatId || !messages || !userId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    // Check if chat exists
-    let chat = await db.chat.findUnique({
+    // Ensure chat exists (use upsert to avoid duplicate creation)
+    const chat = await db.chat.upsert({
       where: { id: chatId },
+      update: {
+        updatedAt: new Date()
+      },
+      create: {
+        id: chatId,
+        userId,
+        title: null
+      },
       include: { messages: true }
     })
-
-    if (!chat) {
-      // Create new chat
-      chat = await db.chat.create({
-        data: {
-          id: chatId,
-          userId,
-          title: null
-        },
-        include: { messages: true }
-      })
-    }
 
     // Save messages to database
     for (const message of messages) {
@@ -61,18 +51,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Generate title if this is the first assistant response and no proper title exists
-    console.log('=== TITLE GENERATION DEBUG ===')
-    console.log('Chat title:', chat.title)
-    console.log('Messages length:', messages.length)
-    console.log('Messages:', messages.map((m: any) => ({ role: m.role, id: m.id })))
-    
     if ((!chat.title || chat.title === 'New Chat') && messages.length >= 2) {
       const firstUserMessage = messages.find((m: any) => m.role === 'user')
       const firstAssistantMessage = messages.find((m: any) => m.role === 'assistant')
-      
-      console.log('Title generation conditions met!')
-      console.log('First user message found:', !!firstUserMessage)
-      console.log('First assistant message found:', !!firstAssistantMessage)
       
       if (firstUserMessage && firstAssistantMessage) {
         try {
@@ -91,22 +72,19 @@ export async function POST(req: NextRequest) {
           })
 
           const title = titleResult.object.title.trim()
-          console.log('Generated title for chat:', chatId, '->', title)
           
           await db.chat.update({
             where: { id: chatId },
             data: { title }
           })
         } catch (error) {
-          console.error('Error generating title:', error)
+          console.error('❌ Error generating title:', error)
           // Fallback to a simple title
           const fallbackTitle = firstUserMessage.parts
             .filter((part: any) => part.type === 'text')
             .map((part: any) => part.text)
             .join('')
             .slice(0, 30) + '...'
-          
-          console.log('Using fallback title:', fallbackTitle)
           
           await db.chat.update({
             where: { id: chatId },

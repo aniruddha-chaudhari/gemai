@@ -1,0 +1,485 @@
+'use client'
+
+import { useEffect, useRef, useState, memo } from 'react'
+import mermaid from 'mermaid'
+import { Transformer } from 'markmap-lib'
+import { Markmap } from 'markmap-view'
+import { Toolbar } from 'markmap-toolbar'
+import { ExternalLink } from 'lucide-react'
+
+// Initialize mermaid with custom theme matching your teal/emerald palette
+if (typeof window !== 'undefined') {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      // Primary colors - Teal/Emerald brand
+      primaryColor: '#14b8a6', // teal-500
+      primaryTextColor: '#ffffff',
+      primaryBorderColor: '#0d9488', // teal-600
+      
+      // Secondary colors
+      secondaryColor: '#10b981', // emerald-500
+      secondaryTextColor: '#ffffff',
+      secondaryBorderColor: '#059669', // emerald-600
+      
+      // Tertiary colors
+      tertiaryColor: '#0f766e', // teal-700
+      tertiaryTextColor: '#ffffff',
+      tertiaryBorderColor: '#115e59', // teal-800
+      
+      // Background and text
+      background: '#1f2937', // gray-800
+      mainBkg: '#14b8a6', // teal-500
+      secondBkg: '#10b981', // emerald-500
+      tertiaryBkg: '#0d9488', // teal-600
+      
+      // Line colors
+      lineColor: '#6b7280', // gray-500
+      textColor: '#f9fafb', // gray-50
+      
+      // Node styling
+      nodeBorder: '#0d9488', // teal-600
+      nodeTextColor: '#ffffff',
+      
+      // Edge styling
+      edgeLabelBackground: '#374151', // gray-700
+      
+      // Class diagram
+      classText: '#ffffff',
+      
+      // State diagram
+      labelBoxBkgColor: '#14b8a6', // teal-500
+      labelBoxBorderColor: '#0d9488', // teal-600
+      labelTextColor: '#ffffff',
+      
+      // Sequence diagram
+      actorBorder: '#0d9488', // teal-600
+      actorBkg: '#14b8a6', // teal-500
+      actorTextColor: '#ffffff',
+      actorLineColor: '#6b7280', // gray-500
+      signalColor: '#f9fafb', // gray-50
+      signalTextColor: '#f9fafb', // gray-50
+      
+      // Gantt diagram
+      gridColor: '#4b5563', // gray-600
+      todayLineColor: '#ef4444', // red-500
+      
+      // Git graph
+      git0: '#14b8a6', // teal-500
+      git1: '#10b981', // emerald-500
+      git2: '#0d9488', // teal-600
+      git3: '#059669', // emerald-600
+      git4: '#0f766e', // teal-700
+      git5: '#047857', // emerald-700
+      git6: '#5eead4', // teal-300
+      git7: '#6ee7b7', // emerald-300
+      
+      // Pie chart
+      pie1: '#14b8a6', // teal-500
+      pie2: '#10b981', // emerald-500
+      pie3: '#0d9488', // teal-600
+      pie4: '#059669', // emerald-600
+      pie5: '#0f766e', // teal-700
+      pie6: '#047857', // emerald-700
+      pie7: '#5eead4', // teal-300
+      pie8: '#6ee7b7', // emerald-300
+      pie9: '#2dd4bf', // teal-400
+      pie10: '#34d399', // emerald-400
+      pie11: '#99f6e4', // teal-200
+      pie12: '#a7f3d0', // emerald-200
+    },
+    securityLevel: 'loose',
+    fontFamily: 'inherit',
+    // Suppress error logging to prevent UI pollution
+    logLevel: 'fatal',
+    suppressErrorRendering: true,
+  })
+}
+
+interface DiagramRendererProps {
+  code: string
+  type: 'mermaid' | 'markmap'
+  language?: string
+  onError?: (error: string, code: string) => void
+}
+
+const MermaidDiagram = memo(({ code, onError }: { code: string; onError?: (error: string, code: string) => void }) => {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [svg, setSvg] = useState<string>('')
+  const [error, setError] = useState<string>('')
+  const [showRawCode, setShowRawCode] = useState(false)
+  const [isRetrying, setIsRetrying] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const renderIdRef = useRef(0)
+  const hasNotifiedError = useRef(false)
+
+  console.log('ðŸŽ¨ MermaidDiagram component mounted with code:', code?.substring(0, 50))
+
+  // Pre-validate Mermaid code structure before attempting to parse
+  const validateMermaidCode = (codeString: string): { valid: boolean; errors: string[] } => {
+    const errors: string[] = []
+    const lines = codeString.split('\n')
+    
+    // Check for incomplete node definitions
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim()
+      const lineNum = index + 1
+      
+      // Skip empty lines and comments
+      if (!trimmedLine || trimmedLine.startsWith('%%')) return
+      
+      // More robust check for incomplete node definitions
+      // Check if line has opening bracket/paren/brace but no matching closing
+      const hasOpenBracket = trimmedLine.includes('[')
+      const hasCloseBracket = trimmedLine.includes(']')
+      const hasOpenParen = trimmedLine.includes('(') && !trimmedLine.match(/\(\[|\[\(/) // Exclude ([ and [( patterns
+      const hasCloseParen = trimmedLine.includes(')')
+      const hasOpenBrace = trimmedLine.includes('{')
+      const hasCloseBrace = trimmedLine.includes('}')
+      
+      // Check for incomplete square brackets [ without ]
+      // This catches patterns like: NodeID[Text (missing ])
+      if (hasOpenBracket && !hasCloseBracket) {
+        // But allow if it's a comment or subgraph (they might have brackets in different contexts)
+        if (!trimmedLine.startsWith('subgraph') && !trimmedLine.startsWith('%%') && 
+            !trimmedLine.startsWith('end') && !trimmedLine.match(/^[A-Za-z_][A-Za-z0-9_]*\s*$/)) {
+          // More specific: check if it looks like a node definition that's incomplete
+          // Pattern: NodeID[Text (where Text doesn't have ])
+          if (trimmedLine.match(/^[A-Za-z_][A-Za-z0-9_]*\[[^\]]*$/)) {
+            errors.push(`Line ${lineNum}: Incomplete node definition - missing closing bracket ] - "${trimmedLine.substring(0, 60)}"`)
+          }
+        }
+      }
+      
+      // Check for incomplete parentheses ( without ) - but allow for connections and comments
+      if (hasOpenParen && !hasCloseParen && !trimmedLine.match(/-->|%%|subgraph/)) {
+        errors.push(`Line ${lineNum}: Incomplete node definition - missing closing parenthesis ) - "${trimmedLine.substring(0, 60)}"`)
+      }
+      
+      // Check for incomplete braces { without }
+      if (hasOpenBrace && !hasCloseBrace && !trimmedLine.startsWith('subgraph')) {
+        errors.push(`Line ${lineNum}: Incomplete node definition - missing closing brace } - "${trimmedLine.substring(0, 60)}"`)
+      }
+      
+      // Check for incomplete connections (--> without target node)
+      if (trimmedLine.includes('-->')) {
+        const afterArrow = trimmedLine.split('-->')[1]?.trim()
+        // Check if there's a valid target (node definition or valid node ID)
+        if (!afterArrow || 
+            (!afterArrow.match(/^[A-Za-z_][A-Za-z0-9_]*\[|^[A-Za-z_][A-Za-z0-9_]*\(|^[A-Za-z_][A-Za-z0-9_]*\{|^[A-Za-z_][A-Za-z0-9_]*$/)) &&
+            !afterArrow.startsWith('|')) { // Allow labels like -->|label|
+          errors.push(`Line ${lineNum}: Incomplete connection - missing or invalid target node after -->`)
+        }
+      }
+      
+      // Check for node IDs starting with numbers (must start with letter)
+      // Match patterns like: 1Node[ or 2Service( etc.
+      if (/^\d+[A-Za-z]/.test(trimmedLine)) {
+        errors.push(`Line ${lineNum}: Node ID starts with number (must start with letter) - "${trimmedLine.substring(0, 60)}"`)
+      }
+    })
+    
+    return {
+      valid: errors.length === 0,
+      errors
+    }
+  }
+
+  useEffect(() => {
+    const currentRenderId = ++renderIdRef.current
+    hasNotifiedError.current = false
+    setIsLoading(true)
+
+    const renderDiagram = async () => {
+      console.log('ðŸ”„ renderDiagram called, containerRef:', !!containerRef.current)
+      
+      if (!containerRef.current) {
+        console.warn('âš ï¸ containerRef is null, waiting...')
+        return
+      }
+
+      try {
+        setError('')
+        setSvg('') // Clear previous SVG
+        
+        // Clean and trim code
+        let cleanedCode = code.trim()
+        
+        // Remove any trailing incomplete lines (likely from streaming cutoff)
+        const lines = cleanedCode.split('\n')
+        const validLines: string[] = []
+        
+        for (const line of lines) {
+          const trimmed = line.trim()
+          // Skip empty lines
+          if (!trimmed) {
+            validLines.push('')
+            continue
+          }
+          
+          // More aggressive check for incomplete nodes - stop at ANY incomplete definition
+          // Check for [ without ], ( without ), { without }, or --> without target
+          const hasOpenBracket = trimmed.includes('[')
+          const hasCloseBracket = trimmed.includes(']')
+          const hasOpenParen = trimmed.includes('(') && !trimmed.match(/\(\[|\[\(/)
+          const hasCloseParen = trimmed.includes(')')
+          const hasOpenBrace = trimmed.includes('{')
+          const hasCloseBrace = trimmed.includes('}')
+          
+          // Stop if we find incomplete brackets/parentheses/braces (unless it's a subgraph or comment)
+          if (!trimmed.startsWith('subgraph') && !trimmed.startsWith('%%') && !trimmed.startsWith('end')) {
+            // Check for incomplete node pattern: NodeID[Text without ]
+            if (hasOpenBracket && !hasCloseBracket) {
+              // Specifically check for node definition pattern
+              if (trimmed.match(/^[A-Za-z_][A-Za-z0-9_]*\[[^\]]*$/)) {
+                console.warn('âš ï¸ Skipping incomplete node definition at end (missing ]):', trimmed)
+                break // Stop at first incomplete line
+              }
+            }
+            if ((hasOpenParen && !hasCloseParen && !trimmed.match(/-->|%%/)) ||
+                (hasOpenBrace && !hasCloseBrace)) {
+              console.warn('âš ï¸ Skipping incomplete node definition at end:', trimmed)
+              break // Stop at first incomplete line
+            }
+          }
+          
+          // Stop if connection is incomplete
+          if (trimmed.includes('-->')) {
+            const afterArrow = trimmed.split('-->')[1]?.trim()
+            if (!afterArrow || 
+                (!afterArrow.match(/^[A-Za-z_][A-Za-z0-9_]*\[|^[A-Za-z_][A-Za-z0-9_]*\(|^[A-Za-z_][A-Za-z0-9_]*\{|^[A-Za-z_][A-Za-z0-9_]*$/) &&
+                 !afterArrow.startsWith('|'))) {
+              console.warn('âš ï¸ Skipping incomplete connection at end:', trimmed)
+              break
+            }
+          }
+          
+          validLines.push(line)
+        }
+        
+        cleanedCode = validLines.join('\n').trim()
+        
+        if (!cleanedCode) {
+          throw new Error('Empty diagram code after cleaning')
+        }
+        
+        console.log('ðŸ”„ Attempting to render Mermaid diagram...')
+        console.log('ðŸ“ Code length:', cleanedCode.length)
+        console.log('ðŸ“ Code preview:', cleanedCode.substring(0, 200) + '...')
+        
+        // Pre-validate code structure
+        const validation = validateMermaidCode(cleanedCode)
+        if (!validation.valid) {
+          const errorMsg = `Syntax validation failed:\n${validation.errors.join('\n')}`
+          console.error('âŒ Pre-validation errors:', validation.errors)
+          throw new Error(errorMsg)
+        }
+        
+        const id = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        
+        // Parse and validate syntax first
+        try {
+          await mermaid.parse(cleanedCode)
+          console.log('âœ… Mermaid parse successful')
+        } catch (parseErr: any) {
+          console.error('âŒ Mermaid parse error:', parseErr)
+          throw parseErr // Re-throw to be caught by outer catch
+        }
+        
+        // Render the mermaid diagram
+        const { svg: renderedSvg } = await mermaid.render(id, cleanedCode)
+        
+        console.log('âœ… Mermaid render successful, SVG length:', renderedSvg?.length)
+        
+        // Only update if this is still the current render
+        if (currentRenderId === renderIdRef.current) {
+          setSvg(renderedSvg)
+          setIsLoading(false)
+        }
+      } catch (err: any) {
+        // Log the full error for debugging
+        console.error('âŒ Mermaid error (full):', err)
+        console.error('âŒ Error type:', err?.constructor?.name)
+        console.error('âŒ Error message:', err?.message)
+        console.error('âŒ Error str:', err?.str)
+        
+        if (currentRenderId === renderIdRef.current) {
+          
+          // Extract meaningful error message
+          let errorMessage = 'Failed to render diagram'
+          let errorLine = ''
+          
+          if (err?.message) {
+            errorMessage = err.message
+            
+            // Extract line number if present in error message
+            const lineMatch = err.message.match(/line (\d+):/i)
+            if (lineMatch) {
+              errorLine = `Line ${lineMatch[1]}`
+            }
+          } else if (err?.str) {
+            errorMessage = err.str
+          } else if (typeof err === 'string') {
+            errorMessage = err
+          }
+          
+          // Make error message more user-friendly
+          const fullError = errorLine ? `${errorLine}: ${errorMessage}` : errorMessage
+          
+          setError(fullError)
+          setShowRawCode(true) // Auto-show code when there's an error
+          setIsLoading(false)
+          
+          // Notify parent about error for auto-retry
+          if (onError && !hasNotifiedError.current) {
+            hasNotifiedError.current = true
+            setTimeout(() => {
+              onError(fullError, code.trim())
+            }, 100)
+          }
+          
+          // Clean up any error divs that Mermaid might have created
+          const errorDivs = document.querySelectorAll('div[id^="dmermaid-"]')
+          errorDivs.forEach(div => div.remove())
+        }
+      }
+    }
+
+    renderDiagram()
+  }, [code, onError])
+
+  // Show loading state - MUST have ref attached!
+  if (isLoading && !error) {
+    return (
+      <div 
+        ref={containerRef}
+        className="my-4 p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg"
+      >
+        <p className="text-sm text-gray-600 dark:text-gray-400">Loading diagram...</p>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="my-4 space-y-2 max-w-full">
+        <div className="p-4 bg-red-50 dark:bg-red-900/20 border-2 border-red-300 dark:border-red-800 rounded-lg">
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <div className="flex-1">
+              <p className="text-sm text-red-800 dark:text-red-300 font-semibold mb-1 flex items-center gap-2">
+                <span className="text-lg">âš ï¸</span> 
+                Mermaid Diagram Syntax Error
+              </p>
+              <p className="text-xs text-red-700 dark:text-red-400">
+                The AI generated invalid diagram syntax. The system will automatically attempt to fix this (max 2 attempts). You can also manually regenerate if needed.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowRawCode(!showRawCode)}
+              className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 hover:underline shrink-0 px-2 py-1 bg-red-100 dark:bg-red-900/30 rounded"
+            >
+              {showRawCode ? 'ðŸ”¼ Hide Code' : 'ðŸ”½ Show Code'}
+            </button>
+          </div>
+          
+          <details className="text-xs text-red-700 dark:text-red-400" open>
+            <summary className="cursor-pointer hover:underline font-semibold mb-2 select-none">
+              ðŸ“‹ Error Details
+            </summary>
+            <div className="mt-2 p-3 bg-red-100 dark:bg-red-900/40 rounded border border-red-200 dark:border-red-800 max-h-40 overflow-y-auto">
+              <pre className="text-xs whitespace-pre-wrap wrap-break-word font-mono text-red-900 dark:text-red-200">{error}</pre>
+            </div>
+          </details>
+          
+          <div className="mt-3 pt-3 border-t border-red-200 dark:border-red-800">
+            <p className="text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
+              <span className="shrink-0">ðŸ’¡</span>
+              <span>
+                <strong>Tip:</strong> This usually happens when the diagram syntax is incomplete or has structural errors. 
+                The system will automatically attempt to regenerate a corrected version up to 2 times. 
+                If all attempts fail, you can manually regenerate the diagram.
+              </span>
+            </p>
+          </div>
+        </div>
+        
+        {showRawCode && (
+          <div className="p-3 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg max-h-64 overflow-y-auto">
+            <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-semibold sticky top-0 bg-gray-50 dark:bg-gray-900 pb-1 flex items-center gap-2">
+              <span>ðŸ“</span> Generated Mermaid Code:
+            </p>
+            <pre className="text-xs text-gray-800 dark:text-gray-200 p-3 bg-white dark:bg-gray-800 rounded whitespace-pre-wrap wrap-break-word font-mono border border-gray-200 dark:border-gray-700">
+              <code>{code}</code>
+            </pre>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  console.log('ðŸ–¼ï¸ Rendering diagram, svg length:', svg?.length, 'isLoading:', isLoading)
+
+  // If we have SVG content, render it
+  if (svg) {
+    const openInFullPage = () => {
+      const encodedCode = encodeURIComponent(code)
+      window.location.href = `/diagram/mermaid?code=${encodedCode}`
+    }
+
+    return (
+      <>
+        <div className="relative my-4">
+          <div 
+            ref={containerRef}
+            className="p-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg overflow-auto max-w-full"
+            style={{
+              maxHeight: '1000px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            <style>{`
+              /* Ensure Mermaid diagrams scale properly in chat */
+              .mermaid-chat-container svg {
+                max-width: 100% !important;
+                max-height: 550px !important;
+                height: auto !important;
+                width: auto !important;
+                display: block !important;
+                margin: 0 auto !important;
+              }
+            `}</style>
+            <div dangerouslySetInnerHTML={{ __html: svg }} className="mermaid-chat-container" />
+          </div>
+          <div className="absolute top-2 right-2 flex gap-2">
+            <button
+              onClick={openInFullPage}
+              className="p-2 bg-blue-500 hover:bg-blue-600 border border-blue-600 rounded-lg transition-colors shadow-sm"
+              title="Open in fullscreen page"
+            >
+              <ExternalLink className="w-4 h-4 text-white" />
+            </button>
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  // Fallback: still loading or no SVG yet
+  return (
+    <div 
+      ref={containerRef}
+      className="my-4 p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg"
+    >
+      <p className="text-sm text-gray-600 dark:text-gray-400">
+        {isLoading ? 'Rendering diagram...' : 'No diagram generated'}
+      </p>
+    </div>
+  )
+})
+
+MermaidDiagram.displayName = 'MermaidDiagram'
+
+

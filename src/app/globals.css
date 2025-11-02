@@ -292,3 +292,78 @@
 .hljs-strong {
   font-weight: bold;
 }
+
+/* Hide Mermaid error elements that leak outside our component */
+/* Only target actual error elements, not diagram containers */
+div[id^="dmermaid-"] > svg + div {
+  display: none !important;
+}
+
+pre.error-text {
+  display: none !important;
+}
+
+.mermaid-error-container {
+  display: none !important;
+}
+
+/* Fullscreen diagram page styles */
+.mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+  min-width: 1200px;
+  min-height: 600px;
+  display: block;
+  margin: 0 auto;
+}
+
+/* Custom scrollbar styling to match theme */
+/* Webkit browsers (Chrome, Edge, Safari) */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+/* Light mode scrollbar */
+::-webkit-scrollbar-track {
+  background: #f9fafb; /* gray-50 */
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db; /* gray-300 */
+  border-radius: 5px;
+  border: 2px solid #f9fafb; /* gray-50 */
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af; /* gray-400 */
+}
+
+/* Dark mode scrollbar */
+.dark ::-webkit-scrollbar-track {
+  background: #1e1e1e; /* dark background */
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #4b5563; /* gray-600 */
+  border-radius: 5px;
+  border: 2px solid #1e1e1e; /* dark background */
+  transition: background 0.2s ease;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #6b7280; /* gray-500 */
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db #f9fafb; /* gray-300 / gray-50 */
+}
+
+.dark * {
+  scrollbar-color: #4b5563 #1e1e1e; /* gray-600 / dark background */
+}
+

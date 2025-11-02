@@ -2,11 +2,13 @@
 
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
-import { ArrowUp, Sparkles, Bot, User, Loader2, Menu, Upload, Search, X } from 'lucide-react'
+import { ArrowUp, Sparkles, Bot, User, Loader2, Menu, Upload, Search, X, Shapes } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 import MarkdownMessage from './MarkdownMessage'
 import { useAuth } from './providers/AuthProvider'
 import { LoginPromptModal } from './LoginPromptModal'
+
+type ToolMode = 'chat' | 'mermaid' | 'markmap'
 
 interface ChatViewProps {
   isDarkMode: boolean
@@ -23,40 +25,257 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
   const [isLoading, setIsLoading] = useState(false)
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [enableSearch, setEnableSearch] = useState(false)
+  const [toolMode, setToolMode] = useState<ToolMode>('chat')
+  const [showToolsMenu, setShowToolsMenu] = useState(false)
   const [showLoginPrompt, setShowLoginPrompt] = useState(false)
   const [messageCount, setMessageCount] = useState(0)
+  const [isAutoRegenerating, setIsAutoRegenerating] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const toolsMenuRef = useRef<HTMLDivElement>(null)
+  const hasAutoRegeneratedRef = useRef(false)
+  const autoRegenerationCountRef = useRef(0)
+  const sendMessageRef = useRef<((message: any) => void) | null>(null)
+  const MAX_AUTO_REGENERATIONS = 2
+  
+  // Use refs to keep track of dynamic values
+  const enableSearchRef = useRef(enableSearch)
+  const currentChatIdRef = useRef(currentChatId)
   const { user, signInWithGoogle } = useAuth()
+  const userIdRef = useRef(user?.id)
+  const toolModeRef = useRef(toolMode)
+  
+  // Update refs when values change
+  enableSearchRef.current = enableSearch
+  currentChatIdRef.current = currentChatId
+  userIdRef.current = user?.id
+  toolModeRef.current = toolMode
 
   const { messages, sendMessage, status, stop, regenerate, error, setMessages } = useChat({
     transport: new DefaultChatTransport({
       api: '/api/chat',
-      body: {
-        chatId: currentChatId || 'default',
-        enableSearch,
-        userId: user?.id,
-      },
+      body: () => ({
+        chatId: currentChatIdRef.current || 'default',
+        enableSearch: toolModeRef.current === 'chat' ? enableSearchRef.current : false,
+        userId: userIdRef.current,
+        toolMode: toolModeRef.current,
+      }),
     }),
-    onFinish: async () => {
+    onFinish: async (message) => {
       setIsLoading(false)
       // Note: Messages are now saved in the main chat route, not here
     },
     onError: (error) => {
-      console.error('Chat error:', error)
+      console.error('❌ Chat error:', error)
       setIsLoading(false)
     },
   })
+  
+  // Update sendMessage ref when it changes
+  useEffect(() => {
+    sendMessageRef.current = sendMessage
+  }, [sendMessage])
+
+  // Close tools menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (toolsMenuRef.current && !toolsMenuRef.current.contains(event.target as Node)) {
+        setShowToolsMenu(false)
+      }
+    }
+
+    if (showToolsMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showToolsMenu])
+  
+  // Handle diagram errors by automatically regenerating
+  const handleDiagramError = (error: string, code: string) => {
+    // Limit auto-regenerations to prevent infinite loops - STRICT LIMIT OF 2
+    if (autoRegenerationCountRef.current >= MAX_AUTO_REGENERATIONS) {
+      console.log(`⏭️ Max auto-regenerations (${MAX_AUTO_REGENERATIONS}) reached. Stopping to prevent infinite loop.`, {
+        currentCount: autoRegenerationCountRef.current,
+        maxAllowed: MAX_AUTO_REGENERATIONS
+      })
+      // Show a message that max attempts were reached
+      setTimeout(() => {
+        if (sendMessageRef.current) {
+          sendMessageRef.current({
+            parts: [{ 
+              type: 'text', 
+              text: `⚠️ Maximum auto-regeneration attempts (${MAX_AUTO_REGENERATIONS}) reached. The diagram still has syntax errors. Please manually review the error message and regenerate if needed.` 
+            }]
+          })
+        }
+      }, 1000)
+      return
+    }
+    
+    // Only auto-regenerate once per response to avoid infinite loops
+    if (hasAutoRegeneratedRef.current || isAutoRegenerating) {
+      console.log('⏭️ Skipping auto-regeneration (already attempted for this response)')
+      return
+    }
+    
+    console.log('🔄 Auto-regenerating diagram due to error:', error, {
+      attemptNumber: autoRegenerationCountRef.current + 1,
+      maxAllowed: MAX_AUTO_REGENERATIONS
+    })
+    hasAutoRegeneratedRef.current = true
+    setIsAutoRegenerating(true)
+    autoRegenerationCountRef.current += 1
+    
+    // Send an automatic fix message with clear examples
+    setTimeout(() => {
+      const diagramType = toolMode === 'mermaid' ? 'Mermaid diagram' : 'mind map'
+      
+      // Extract specific error guidance based on the actual error
+      let specificFix = ''
+      
+      // Check for incomplete node definition (missing closing bracket)
+      // This catches errors like "Expecting ... got '1'" which often means incomplete bracket
+      if ((error.includes('Expecting ') && error.includes('[')) ||
+          (error.includes("got '1'") && error.includes('[')) ||
+          (error.includes("got '2'") && error.includes('[')) ||
+          (error.includes("got '3'") && error.includes('['))) {
+        specificFix = `
+
+SPECIFIC ERROR: Incomplete node definition!
+You started a node with [ but didn't close it with ]
+
+❌ WRONG: 
+StreamSvc[Streaming
+AuthSvc[Authentication
+CDNSvc[Content
+
+(incomplete - missing the closing bracket and text)
+
+✅ CORRECT: 
+StreamSvc[Streaming Service]
+AuthSvc[Authentication Service]
+CDNSvc[Content Delivery Network]
+
+Every node MUST be complete on one line:
+NodeID[Complete Node Text Here]
+
+⚠️ CRITICAL: Finish writing the entire node text AND close the bracket ] on the SAME line before moving to the next line!`
+      }
+      // Check for node IDs starting with numbers (when it's NOT about incomplete brackets)
+      else if ((error.includes("got '1'") || error.includes("got '2'") || error.includes("got '3'")) && 
+               !error.includes('[') && !error.includes('Parse error')) {
+        specificFix = `
+
+SPECIFIC ERROR: Node ID starts with a number!
+❌ WRONG: 1Client, 2API, 3Database, 1UserDevice
+✅ CORRECT: Client, API, Database, UserDevice
+✅ CORRECT: step1, step2, step3
+✅ CORRECT: A, B, C, D
+
+Example of CORRECT syntax:
+\`\`\`mermaid
+graph TD
+    Client[User Device Client]
+    API[API Gateway]
+    Auth[Auth Service]
+    Music[Music Service]
+    
+    Client --> API
+    API --> Auth
+    API --> Music
+\`\`\`
+
+DO NOT use: 1Client, 2API, 3Auth - This causes parse errors!
+USE: Client, API, Auth OR step1, step2, step3`
+      }
+      // Check for parentheses in text
+      else if (error.includes("got 'PS'") || error.includes('parenthes')) {
+        specificFix = `
+
+SPECIFIC ERROR: Parentheses in node text!
+❌ WRONG: A[User (Client)]
+✅ CORRECT: A[User Client]
+
+Remove ALL parentheses from inside square brackets.`
+      }
+      // Check for comments in wrong place
+      else if (error.includes("got 'NODE_STRING'") && code.includes('%')) {
+        specificFix = `
+
+SPECIFIC ERROR: Comment placement error!
+Comments (%) must be on their own line, not after node definitions.
+
+❌ WRONG: 
+CDNSvc[Content Network] % This is a comment
+
+✅ CORRECT: 
+%% This is a comment
+CDNSvc[Content Network]
+
+Move all comments to separate lines or remove them.`
+      }
+      
+      const attemptInfo = autoRegenerationCountRef.current > 0 
+        ? `\n\n⚠️ AUTO-REGENERATION ATTEMPT ${autoRegenerationCountRef.current} of ${MAX_AUTO_REGENERATIONS}`
+        : `\n\n⚠️ AUTO-REGENERATION ATTEMPT 1 of ${MAX_AUTO_REGENERATIONS}`
+      
+      const fixMessage = `STOP! The ${diagramType} has a critical syntax error.${attemptInfo}
+
+ERROR: "${error}"${specificFix}
+
+MANDATORY RULES - READ CAREFULLY:
+1. Every node MUST be complete: NodeID[Text] - NO unclosed brackets!
+2. Node IDs MUST start with LETTERS (Client, API, step1) - NEVER numbers (1A, 2B)!
+3. NO parentheses () anywhere in node text!
+4. Comments %% must be on separate lines
+5. One complete node definition per line
+
+THINK STEP BY STEP:
+Step 1: Plan your node IDs - make sure they ALL start with letters
+Step 2: Write each node COMPLETELY on one line
+Step 3: Check for parentheses () - REMOVE ALL OF THEM
+Step 4: Verify every bracket [ has a matching ]
+Step 5: Only THEN generate the output
+
+Generate a SIMPLE, COMPLETE, WORKING diagram. Quality over quantity!`
+      
+      if (sendMessageRef.current) {
+        sendMessageRef.current({
+          parts: [{ type: 'text', text: fixMessage }]
+        })
+      }
+      
+      setIsAutoRegenerating(false)
+    }, 500)
+  }
 
   const isStreaming = status === 'streaming' || status === 'submitted'
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const scrollToBottom = (instant = false) => {
+    messagesEndRef.current?.scrollIntoView({ behavior: instant ? 'auto' : 'smooth' })
   }
 
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // Reset auto-regeneration flag when streaming completes
+  useEffect(() => {
+    if (status === 'ready') {
+      // Small delay to ensure the last message is fully rendered
+      setTimeout(() => {
+        hasAutoRegeneratedRef.current = false
+        // Don't reset count here - it should persist until chat/mode change
+      }, 1000)
+    }
+  }, [status])
+
+  // Reset auto-regeneration count when starting a new chat or changing tool mode
+  useEffect(() => {
+    console.log('🔄 Resetting auto-regeneration count', { currentChatId, toolMode })
+    autoRegenerationCountRef.current = 0
+    hasAutoRegeneratedRef.current = false
+  }, [currentChatId, toolMode])
 
   // Track message count and show login prompt after 3 messages
   useEffect(() => {
@@ -75,11 +294,12 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
   useEffect(() => {
     if (initialMessages.length > 0) {
       setMessages(initialMessages)
-    } else {
-      // Clear messages for new chats or when no messages
+    } else if (currentChatId === null) {
+      // Only clear messages when explicitly starting a new chat (no chatId)
       setMessages([])
     }
-  }, [initialMessages, setMessages])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMessages])
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
@@ -92,54 +312,57 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    // Prevent double submission
+    if (isStreaming || status !== 'ready') {
+      return
+    }
+    
     if (inputValue.trim() || uploadedFiles.length > 0) {
+      
+      // Capture values before clearing
+      const messageText = inputValue.trim()
+      const filesToUpload = [...uploadedFiles]
+      
+      // Clear input immediately to prevent double submission
+      setInputValue('')
+      setUploadedFiles([])
       setIsLoading(true)
       
-      // Don't save user message here - let onFinish handle all message saving
-      
-      // Create message content with text and files
-      const content = []
-      
-      if (inputValue.trim()) {
-        content.push({ type: 'text', text: inputValue })
-      }
-      
-      // Add files to content
-      for (const file of uploadedFiles) {
-        content.push({
-          type: 'file',
-          data: file,
-          mediaType: file.type,
+      // Save user message to database in the BACKGROUND (non-blocking)
+      // Don't await this - let it happen asynchronously
+      if (user && currentChatId && messageText) {
+        fetch('/api/chat/save', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            chatId: currentChatId,
+            messages: [{
+              id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              role: 'user',
+              parts: [{ type: 'text', text: messageText }]
+            }],
+            userId: user.id,
+          }),
         })
-      }
-      
-      // Save user message to database immediately (only if user is authenticated)
-      if (user && currentChatId && inputValue.trim()) {
-        try {
-          // Ensure chat exists
-          await fetch('/api/chat/save', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              chatId: currentChatId,
-              messages: [{
-                id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                role: 'user',
-                parts: [{ type: 'text', text: inputValue }]
-              }],
-              userId: user.id,
-            }),
-          })
-        } catch (error) {
-          console.error('Error saving user message:', error)
-        }
+        .then(async response => {
+          if (!response.ok) {
+            const error = await response.text()
+            console.error('❌ Failed to save user message:', error)
+          } else {
+            console.log('💾 User message saved successfully')
+          }
+        })
+        .catch(error => console.error('❌ Error saving user message:', error))
       }
 
-      if (uploadedFiles.length > 0) {
+      // Send message immediately without waiting for database save
+      if (filesToUpload.length > 0) {
+        console.log('📎 Processing files:', filesToUpload.length)
         // Convert files to base64 for server processing
-        const filePromises = uploadedFiles.map(async (file) => {
+        const filePromises = filesToUpload.map(async (file) => {
           const arrayBuffer = await file.arrayBuffer()
           const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
           return {
@@ -155,7 +378,7 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
         const message = {
           role: 'user' as const,
           parts: [
-            ...(inputValue.trim() ? [{ type: 'text' as const, text: inputValue }] : []),
+            ...(messageText ? [{ type: 'text' as const, text: messageText }] : []),
             ...fileParts
           ]
         }
@@ -163,11 +386,12 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
         sendMessage(message)
       } else {
         // Send regular text message
-        sendMessage({ text: inputValue })
+        sendMessage({ text: messageText })
       }
       
-      setInputValue('')
-      setUploadedFiles([])
+      // Scroll to bottom immediately (instant, no animation)
+      setTimeout(() => scrollToBottom(true), 50)
+      
       // Auto-collapse sidebar when user sends a message
       onCollapseSidebar()
     }
@@ -273,15 +497,17 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
             ) : (
               messages.map((message, index) => (
                 <div
-                  key={message.id}
+                  key={`${message.id}-${index}`}
                   className={`flex gap-4 animate-in slide-in-from-bottom duration-200 ${
                     message.role === 'user' ? 'justify-end' : 'justify-start'
                   }`}
                   style={{ animationDelay: `${index * 100}ms` }}
                 >
                   <div
-                    className={`flex gap-3 lg:gap-4 max-w-[85%] lg:max-w-[80%] ${
-                      message.role === 'user' ? 'flex-row-reverse' : 'flex-row'
+                    className={`flex gap-3 lg:gap-4 ${
+                      message.role === 'user' 
+                        ? 'flex-row-reverse max-w-[85%] lg:max-w-[70%]' 
+                        : 'flex-row w-full'
                     }`}
                   >
                     <div
@@ -298,10 +524,10 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
                       )}
                     </div>
                     <div
-                      className={`px-4 py-3 rounded-2xl ${
+                      className={`rounded-2xl ${
                         message.role === 'user'
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+                          ? 'bg-blue-600 text-white px-4 py-3'
+                          : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-4 py-3 flex-1'
                       }`}
                     >
                       {message.role === 'user' ? (
@@ -315,13 +541,28 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
                         </p>
                       ) : (
                         <div>
-                          <MarkdownMessage 
-                            content={message.parts
+                          {(() => {
+                            const textContent = message.parts
                               .filter(part => part.type === 'text')
                               .map(part => part.text)
                               .join('')
-                            } 
-                          />
+                            
+                            // Debug: Log message structure
+                            if (message.parts.length === 0) {
+                              console.log('⚠️ Message has no parts:', message)
+                            }
+                            
+                            if (textContent) {
+                              return <MarkdownMessage content={textContent} onDiagramError={handleDiagramError} />
+                            } else {
+                              // Message only has tool calls, no text
+                              return (
+                                <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+                                  Processing...
+                                </p>
+                              )
+                            }
+                          })()}
                           {status === 'ready' && message.role === 'assistant' && (
                             <div className="mt-2 flex gap-2">
                               <button
@@ -341,7 +582,7 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
               ))
             )}
             
-            {isStreaming && (
+            {isStreaming && messages.length > 0 && messages[messages.length - 1].role !== 'assistant' && (
               <div className="flex gap-4 justify-start animate-in slide-in-from-bottom duration-200">
                 <div className="flex gap-4 max-w-[80%]">
                   <div className="w-8 h-8 rounded-full bg-linear-to-br from-teal-500 to-emerald-600 text-white flex items-center justify-center shrink-0">
@@ -414,13 +655,107 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
           <form onSubmit={handleSubmit} className="relative">
             <div className="relative rounded-2xl lg:rounded-3xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-lg shadow-teal-500/20 dark:shadow-teal-500/20 focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-500/20 transition-all duration-200">
 
+              {/* Tools button - left side */}
+              <div className="absolute left-2 top-1/2 -translate-y-1/2">
+                <div className="relative" ref={toolsMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setShowToolsMenu(!showToolsMenu)}
+                    className={`p-1.5 lg:p-2 rounded-lg transition-all duration-200 group relative ${
+                      toolMode !== 'chat'
+                        ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400'
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400'
+                    }`}
+                    title="Tools"
+                  >
+                    <Shapes className="w-4 h-4 lg:w-5 lg:h-5" />
+                    {toolMode !== 'chat' && (
+                      <div className="absolute -top-1 -right-1 w-2 h-2 bg-purple-500 rounded-full animate-pulse" />
+                    )}
+                  </button>
+
+                  {/* Tools dropdown menu */}
+                  {showToolsMenu && (
+                    <div className="absolute left-0 bottom-full mb-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg overflow-hidden z-50">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          console.log('🔧 Tool mode: Chat')
+                          setToolMode('chat')
+                          setShowToolsMenu(false)
+                        }}
+                        className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 transition-colors ${
+                          toolMode === 'chat'
+                            ? 'bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400'
+                            : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                        }`}
+                      >
+                        <span className="text-lg">💬</span>
+                        <div>
+                          <div className="font-medium">Chat</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400">Normal conversation</div>
+                        </div>
+                      </button>
+                      {/* Mermaid Diagrams option - commented out
+                      <button
+                        type="button"
+                        onClick={() => {
+                          console.log('📊 Tool mode: Mermaid Diagrams')
+                          setToolMode('mermaid')
+                          setShowToolsMenu(false)
+                        }}
+                        className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 transition-colors ${
+                          toolMode === 'mermaid'
+                            ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400'
+                            : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                        }`}
+                      >
+                        <span className="text-lg">📊</span>
+                        <div>
+                          <div className="font-medium">Diagrams</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400">Flowcharts, sequences, etc.</div>
+                        </div>
+                      </button>
+                      */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          console.log('🧠 Tool mode: Markmap Mind Maps')
+                          setToolMode('markmap')
+                          setShowToolsMenu(false)
+                        }}
+                        className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 transition-colors ${
+                          toolMode === 'markmap'
+                            ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400'
+                            : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                        }`}
+                      >
+                        <span className="text-lg">🧠</span>
+                        <div>
+                          <div className="font-medium">Mind Maps</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400">Interactive mind maps</div>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <input
                 type="text"
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder="Message ChatGPT"
-                className="w-full pl-4 lg:pl-6 pr-32 lg:pr-36 py-3 lg:py-4 bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none text-sm lg:text-base"
-                disabled={isStreaming}
+                placeholder={
+                  isStreaming 
+                    ? "Processing..." 
+                    : toolMode === 'mermaid' 
+                    ? "Describe a diagram (flowchart, sequence, etc.)"
+                    : toolMode === 'markmap'
+                    ? "Describe a mind map structure"
+                    : "Message ChatGPT"
+                }
+                className="w-full pl-12 lg:pl-14 pr-32 lg:pr-36 py-3 lg:py-4 bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none text-sm lg:text-base disabled:opacity-50"
+                disabled={isStreaming || status !== 'ready'}
               />
 
               <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 lg:gap-2">
@@ -433,31 +768,37 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
                   accept=".pdf,.txt,.doc,.docx,.jpg,.jpeg,.png,.gif,.mp4,.mp3,.wav"
                 />
                 
-                <button
-                  type="button"
-                  onClick={() => setEnableSearch(!enableSearch)}
-                  className={`p-1.5 lg:p-2 rounded-lg transition-all duration-200 group relative ${
-                    enableSearch 
-                      ? 'bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400' 
-                      : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400'
-                  }`}
-                  title={enableSearch ? "Disable web search" : "Enable web search"}
-                >
-                  <Search className="w-4 h-4 lg:w-5 lg:h-5" />
-                  {enableSearch && (
-                    <div className="absolute -top-1 -right-1 w-2 h-2 bg-teal-500 rounded-full animate-pulse" />
-                  )}
-                </button>
+                {/* Search button - only in chat mode */}
+                {toolMode === 'chat' && (
+                  <button
+                    type="button"
+                    onClick={() => setEnableSearch(!enableSearch)}
+                    className={`p-1.5 lg:p-2 rounded-lg transition-all duration-200 group relative ${
+                      enableSearch 
+                        ? 'bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400' 
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400'
+                    }`}
+                    title={enableSearch ? "Disable web search" : "Enable web search"}
+                  >
+                    <Search className="w-4 h-4 lg:w-5 lg:h-5" />
+                    {enableSearch && (
+                      <div className="absolute -top-1 -right-1 w-2 h-2 bg-teal-500 rounded-full animate-pulse" />
+                    )}
+                  </button>
+                )}
                 
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isStreaming}
-                  className="p-1.5 lg:p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Upload files"
-                >
-                  <Upload className="w-4 h-4 lg:w-5 lg:h-5 text-gray-500 dark:text-gray-400" />
-                </button>
+                {/* File upload - only in chat mode */}
+                {toolMode === 'chat' && (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isStreaming}
+                    className="p-1.5 lg:p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Upload files"
+                  >
+                    <Upload className="w-4 h-4 lg:w-5 lg:h-5 text-gray-500 dark:text-gray-400" />
+                  </button>
+                )}
 
                 {isStreaming ? (
                   <button
@@ -471,11 +812,19 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
                 ) : (
                   <button
                     type="submit"
-                    disabled={(!inputValue.trim() && uploadedFiles.length === 0) || status !== 'ready'}
-                    className="p-1.5 lg:p-2 rounded-lg bg-teal-600 dark:bg-teal-500 text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-teal-700 dark:hover:bg-teal-600 transition-all duration-200 hover:scale-105 disabled:hover:scale-100"
-                    title="Send message"
+                    disabled={(!inputValue.trim() && uploadedFiles.length === 0) || status !== 'ready' || isStreaming}
+                    className={`p-1.5 lg:p-2 rounded-lg text-white transition-all duration-200 disabled:cursor-not-allowed disabled:hover:scale-100 ${
+                      status !== 'ready' || isStreaming
+                        ? 'bg-gray-400 dark:bg-gray-600 opacity-50'
+                        : 'bg-teal-600 dark:bg-teal-500 hover:bg-teal-700 dark:hover:bg-teal-600 hover:scale-105'
+                    }`}
+                    title={isStreaming ? "Processing message..." : "Send message"}
                   >
-                    <ArrowUp className="w-4 h-4 lg:w-5 lg:h-5" />
+                    {status !== 'ready' || isStreaming ? (
+                      <Loader2 className="w-4 h-4 lg:w-5 lg:h-5 animate-spin" />
+                    ) : (
+                      <ArrowUp className="w-4 h-4 lg:w-5 lg:h-5" />
+                    )}
                   </button>
                 )}
               </div>
