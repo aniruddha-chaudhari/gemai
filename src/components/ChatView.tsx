@@ -29,14 +29,9 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
   const [showToolsMenu, setShowToolsMenu] = useState(false)
   const [showLoginPrompt, setShowLoginPrompt] = useState(false)
   const [messageCount, setMessageCount] = useState(0)
-  const [isAutoRegenerating, setIsAutoRegenerating] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const toolsMenuRef = useRef<HTMLDivElement>(null)
-  const hasAutoRegeneratedRef = useRef(false)
-  const autoRegenerationCountRef = useRef(0)
-  const sendMessageRef = useRef<((message: any) => void) | null>(null)
-  const MAX_AUTO_REGENERATIONS = 2
   
   // Use refs to keep track of dynamic values
   const enableSearchRef = useRef(enableSearch)
@@ -70,11 +65,6 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
       setIsLoading(false)
     },
   })
-  
-  // Update sendMessage ref when it changes
-  useEffect(() => {
-    sendMessageRef.current = sendMessage
-  }, [sendMessage])
 
   // Close tools menu when clicking outside
   useEffect(() => {
@@ -89,165 +79,6 @@ export function ChatView({ isDarkMode, currentChatId, isSidebarOpen, onToggleSid
       return () => document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [showToolsMenu])
-  
-  // Handle diagram errors by automatically regenerating
-  const handleDiagramError = (error: string, code: string) => {
-    // Limit auto-regenerations to prevent infinite loops - STRICT LIMIT OF 2
-    if (autoRegenerationCountRef.current >= MAX_AUTO_REGENERATIONS) {
-      console.log(`⏭️ Max auto-regenerations (${MAX_AUTO_REGENERATIONS}) reached. Stopping to prevent infinite loop.`, {
-        currentCount: autoRegenerationCountRef.current,
-        maxAllowed: MAX_AUTO_REGENERATIONS
-      })
-      // Show a message that max attempts were reached
-      setTimeout(() => {
-        if (sendMessageRef.current) {
-          sendMessageRef.current({
-            parts: [{ 
-              type: 'text', 
-              text: `⚠️ Maximum auto-regeneration attempts (${MAX_AUTO_REGENERATIONS}) reached. The diagram still has syntax errors. Please manually review the error message and regenerate if needed.` 
-            }]
-          })
-        }
-      }, 1000)
-      return
-    }
-    
-    // Only auto-regenerate once per response to avoid infinite loops
-    if (hasAutoRegeneratedRef.current || isAutoRegenerating) {
-      console.log('⏭️ Skipping auto-regeneration (already attempted for this response)')
-      return
-    }
-    
-    console.log('🔄 Auto-regenerating diagram due to error:', error, {
-      attemptNumber: autoRegenerationCountRef.current + 1,
-      maxAllowed: MAX_AUTO_REGENERATIONS
-    })
-    hasAutoRegeneratedRef.current = true
-    setIsAutoRegenerating(true)
-    autoRegenerationCountRef.current += 1
-    
-    // Send an automatic fix message with clear examples
-    setTimeout(() => {
-      const diagramType = toolMode === 'mermaid' ? 'Mermaid diagram' : 'mind map'
-      
-      // Extract specific error guidance based on the actual error
-      let specificFix = ''
-      
-      // Check for incomplete node definition (missing closing bracket)
-      // This catches errors like "Expecting ... got '1'" which often means incomplete bracket
-      if ((error.includes('Expecting ') && error.includes('[')) ||
-          (error.includes("got '1'") && error.includes('[')) ||
-          (error.includes("got '2'") && error.includes('[')) ||
-          (error.includes("got '3'") && error.includes('['))) {
-        specificFix = `
-
-SPECIFIC ERROR: Incomplete node definition!
-You started a node with [ but didn't close it with ]
-
-❌ WRONG: 
-StreamSvc[Streaming
-AuthSvc[Authentication
-CDNSvc[Content
-
-(incomplete - missing the closing bracket and text)
-
-✅ CORRECT: 
-StreamSvc[Streaming Service]
-AuthSvc[Authentication Service]
-CDNSvc[Content Delivery Network]
-
-Every node MUST be complete on one line:
-NodeID[Complete Node Text Here]
-
-⚠️ CRITICAL: Finish writing the entire node text AND close the bracket ] on the SAME line before moving to the next line!`
-      }
-      // Check for node IDs starting with numbers (when it's NOT about incomplete brackets)
-      else if ((error.includes("got '1'") || error.includes("got '2'") || error.includes("got '3'")) && 
-               !error.includes('[') && !error.includes('Parse error')) {
-        specificFix = `
-
-SPECIFIC ERROR: Node ID starts with a number!
-❌ WRONG: 1Client, 2API, 3Database, 1UserDevice
-✅ CORRECT: Client, API, Database, UserDevice
-✅ CORRECT: step1, step2, step3
-✅ CORRECT: A, B, C, D
-
-Example of CORRECT syntax:
-\`\`\`mermaid
-graph TD
-    Client[User Device Client]
-    API[API Gateway]
-    Auth[Auth Service]
-    Music[Music Service]
-    
-    Client --> API
-    API --> Auth
-    API --> Music
-\`\`\`
-
-DO NOT use: 1Client, 2API, 3Auth - This causes parse errors!
-USE: Client, API, Auth OR step1, step2, step3`
-      }
-      // Check for parentheses in text
-      else if (error.includes("got 'PS'") || error.includes('parenthes')) {
-        specificFix = `
-
-SPECIFIC ERROR: Parentheses in node text!
-❌ WRONG: A[User (Client)]
-✅ CORRECT: A[User Client]
-
-Remove ALL parentheses from inside square brackets.`
-      }
-      // Check for comments in wrong place
-      else if (error.includes("got 'NODE_STRING'") && code.includes('%')) {
-        specificFix = `
-
-SPECIFIC ERROR: Comment placement error!
-Comments (%) must be on their own line, not after node definitions.
-
-❌ WRONG: 
-CDNSvc[Content Network] % This is a comment
-
-✅ CORRECT: 
-%% This is a comment
-CDNSvc[Content Network]
-
-Move all comments to separate lines or remove them.`
-      }
-      
-      const attemptInfo = autoRegenerationCountRef.current > 0 
-        ? `\n\n⚠️ AUTO-REGENERATION ATTEMPT ${autoRegenerationCountRef.current} of ${MAX_AUTO_REGENERATIONS}`
-        : `\n\n⚠️ AUTO-REGENERATION ATTEMPT 1 of ${MAX_AUTO_REGENERATIONS}`
-      
-      const fixMessage = `STOP! The ${diagramType} has a critical syntax error.${attemptInfo}
-
-ERROR: "${error}"${specificFix}
-
-MANDATORY RULES - READ CAREFULLY:
-1. Every node MUST be complete: NodeID[Text] - NO unclosed brackets!
-2. Node IDs MUST start with LETTERS (Client, API, step1) - NEVER numbers (1A, 2B)!
-3. NO parentheses () anywhere in node text!
-4. Comments %% must be on separate lines
-5. One complete node definition per line
-
-THINK STEP BY STEP:
-Step 1: Plan your node IDs - make sure they ALL start with letters
-Step 2: Write each node COMPLETELY on one line
-Step 3: Check for parentheses () - REMOVE ALL OF THEM
-Step 4: Verify every bracket [ has a matching ]
-Step 5: Only THEN generate the output
-
-Generate a SIMPLE, COMPLETE, WORKING diagram. Quality over quantity!`
-      
-      if (sendMessageRef.current) {
-        sendMessageRef.current({
-          parts: [{ type: 'text', text: fixMessage }]
-        })
-      }
-      
-      setIsAutoRegenerating(false)
-    }, 500)
-  }
 
   const isStreaming = status === 'streaming' || status === 'submitted'
 
@@ -258,24 +89,6 @@ Generate a SIMPLE, COMPLETE, WORKING diagram. Quality over quantity!`
   useEffect(() => {
     scrollToBottom()
   }, [messages])
-
-  // Reset auto-regeneration flag when streaming completes
-  useEffect(() => {
-    if (status === 'ready') {
-      // Small delay to ensure the last message is fully rendered
-      setTimeout(() => {
-        hasAutoRegeneratedRef.current = false
-        // Don't reset count here - it should persist until chat/mode change
-      }, 1000)
-    }
-  }, [status])
-
-  // Reset auto-regeneration count when starting a new chat or changing tool mode
-  useEffect(() => {
-    console.log('🔄 Resetting auto-regeneration count', { currentChatId, toolMode })
-    autoRegenerationCountRef.current = 0
-    hasAutoRegeneratedRef.current = false
-  }, [currentChatId, toolMode])
 
   // Track message count and show login prompt after 3 messages
   useEffect(() => {
@@ -553,7 +366,7 @@ Generate a SIMPLE, COMPLETE, WORKING diagram. Quality over quantity!`
                             }
                             
                             if (textContent) {
-                              return <MarkdownMessage content={textContent} onDiagramError={handleDiagramError} />
+                              return <MarkdownMessage content={textContent} />
                             } else {
                               // Message only has tool calls, no text
                               return (

@@ -484,16 +484,196 @@ MermaidDiagram.displayName = 'MermaidDiagram'
 
 const MarkmapDiagram = memo(({ code }: { code: string }) => {
   const svgRef = useRef<SVGSVGElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const [isRendered, setIsRendered] = useState(false)
+  const markmapRef = useRef<Markmap | null>(null)
+  const prevCodeRef = useRef<string>('')
+  const isInitializedRef = useRef<boolean>(false)
 
   useEffect(() => {
-    if (svgRef.current) {
-      const transformer = new Transformer()
-      const { root } = transformer.transform(code)
-      const mm = Markmap.create(svgRef.current)
-      mm.setData(root)
-      mm.fit()
-      setIsRendered(true)
+    const svg = svgRef.current
+    const container = containerRef.current
+    
+    if (!svg || !container) return
+
+    // Skip re-render if code hasn't actually changed
+    if (prevCodeRef.current === code && markmapRef.current) {
+      console.log('⏭️ Skipping Markmap re-render - code unchanged')
+      // Just re-fit on resize, don't re-collapse
+      if (markmapRef.current && isInitializedRef.current) {
+        const rect = container.getBoundingClientRect()
+        const width = rect.width || 800
+        const height = rect.height || 500
+        svg.setAttribute('width', `${width}`)
+        svg.setAttribute('height', `${height}`)
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
+        markmapRef.current.fit()
+      }
+      return
+    }
+    
+    prevCodeRef.current = code
+    isInitializedRef.current = false
+
+    // Clear any existing content first to prevent duplicates
+    svg.innerHTML = ''
+    
+    // Set explicit dimensions to prevent SVGLength errors
+    const rect = container.getBoundingClientRect()
+    const width = rect.width || 800
+    const height = rect.height || 500
+    
+    svg.setAttribute('width', `${width}`)
+    svg.setAttribute('height', `${height}`)
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
+    
+    console.log('🎨 Rendering Markmap in chat view...', { width, height })
+    
+    const transformer = new Transformer()
+    const { root } = transformer.transform(code)
+    
+    // Destroy existing markmap instance if any
+    if (markmapRef.current) {
+      markmapRef.current = null
+    }
+    
+    // Create new markmap with improved settings
+    markmapRef.current = Markmap.create(svg, {
+      duration: 500,
+      maxWidth: 400,  // Increased for larger text
+      spacingVertical: 10,  // More spacing between nodes
+      spacingHorizontal: 120,  // More horizontal spacing
+      paddingX: 20,  // More padding
+      initialExpandLevel: -1,
+      // Use bright colors for nodes on dark background
+      color: (node: any) => {
+        const colors = [
+          '#5eead4', // teal-300 - very bright
+          '#6ee7b7', // emerald-300 - very bright
+          '#2dd4bf', // teal-400 - bright
+          '#34d399', // emerald-400 - bright
+          '#14b8a6', // teal-500 - medium
+          '#10b981', // emerald-500 - medium
+        ]
+        return colors[node.state.depth % colors.length]
+      },
+    })
+    
+    markmapRef.current.setData(root)
+    markmapRef.current.fit()
+    
+    // Collapse all nodes deeper than level 1
+    setTimeout(() => {
+      if (markmapRef.current) {
+        const { state } = markmapRef.current
+        
+        const collapseDeep = (node: any, depth: number = 0) => {
+          if (depth >= 1 && node.children && node.children.length > 0) {
+            node.payload = node.payload || {}
+            node.payload.fold = 1
+          }
+          if (node.children) {
+            node.children.forEach((child: any) => collapseDeep(child, depth + 1))
+          }
+        }
+        
+        collapseDeep(state.data)
+        markmapRef.current.setData(state.data)
+        markmapRef.current.fit()
+        
+        // Final fit for optimal display
+        setTimeout(() => {
+          if (markmapRef.current) {
+            markmapRef.current.fit()
+            // Mark as initialized after all collapse and fit operations are done
+            isInitializedRef.current = true
+            console.log('✅ Markmap initialization complete')
+          }
+        }, 200)
+      }
+    }, 150)
+    
+    // Apply aggressive text styling for dark mode
+    setTimeout(() => {
+      if (svg) {
+        console.log('🎨 Applying text styling for dark mode visibility')
+        
+        // Force ALL text elements to white
+        const textElements = svg.querySelectorAll('text')
+        textElements.forEach(text => {
+          // Remove any dark fills
+          text.removeAttribute('fill')
+          // Use setProperty with 'important' flag for maximum priority
+          text.style.setProperty('fill', '#ffffff', 'important')
+          text.style.setProperty('font-weight', '600', 'important')
+          text.style.setProperty('cursor', 'pointer', 'important')
+          text.style.setProperty('text-shadow', '0 2px 4px rgba(0, 0, 0, 0.8)', 'important')
+          // Set as attribute too for redundancy
+          text.setAttribute('fill', '#ffffff')
+          // Also set color property
+          text.style.color = '#ffffff'
+        })
+        
+        // Force style on tspan elements
+        const tspanElements = svg.querySelectorAll('tspan')
+        tspanElements.forEach(tspan => {
+          tspan.removeAttribute('fill')
+          tspan.style.setProperty('fill', '#ffffff', 'important')
+          tspan.style.setProperty('font-weight', '600', 'important')
+          tspan.style.setProperty('text-shadow', '0 2px 4px rgba(0, 0, 0, 0.8)', 'important')
+          tspan.setAttribute('fill', '#ffffff')
+          tspan.style.color = '#ffffff'
+        })
+        
+        // Set up MutationObserver to continuously fix dark text
+        const observer = new MutationObserver((mutations) => {
+          mutations.forEach((mutation) => {
+            if (mutation.type === 'attributes' || mutation.type === 'childList') {
+              if (svg) {
+                const texts = svg.querySelectorAll('text, tspan')
+                texts.forEach(text => {
+                  const currentFill = text.getAttribute('fill')
+                  // Only update if it's dark
+                  if (currentFill && (
+                    currentFill.includes('#0') || 
+                    currentFill.includes('#1') || 
+                    currentFill.includes('#2') || 
+                    currentFill.includes('#3') || 
+                    currentFill === 'black' ||
+                    currentFill === '#000'
+                  )) {
+                    console.log(`🔧 Fixing dark text: ${currentFill} → #ffffff`)
+                    text.removeAttribute('fill')
+                    if (text instanceof SVGElement) {
+                      text.style.setProperty('fill', '#ffffff', 'important')
+                    }
+                    text.setAttribute('fill', '#ffffff')
+                  }
+                })
+              }
+            }
+          })
+        })
+        
+        // Observe the SVG for changes
+        observer.observe(svg, {
+          attributes: true,
+          attributeFilter: ['fill', 'style'],
+          childList: true,
+          subtree: true
+        })
+        console.log('👁️ MutationObserver active')
+      }
+    }, 250)
+    
+    setIsRendered(true)
+    
+    return () => {
+      // Cleanup
+      if (svg) {
+        svg.innerHTML = ''
+      }
+      markmapRef.current = null
     }
   }, [code])
 
@@ -504,8 +684,57 @@ const MarkmapDiagram = memo(({ code }: { code: string }) => {
 
   return (
     <div className="relative my-4">
-      <div className="p-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg" style={{ height: '500px' }}>
-        <svg ref={svgRef} style={{ width: '100%', height: '100%' }} />
+      <div 
+        ref={containerRef}
+        className="p-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg" 
+        style={{ height: '500px', width: '100%', position: 'relative' }}
+      >
+        <style>{`
+          /* Force white text on dark background - Enhanced CSS */
+          svg text,
+          svg text *,
+          svg tspan,
+          svg tspan *,
+          svg foreignObject text,
+          svg foreignObject * {
+            fill: #ffffff !important;
+            font-weight: 600 !important;
+            color: #ffffff !important;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8) !important;
+          }
+          
+          /* Additional specific overrides */
+          svg .markmap-text,
+          svg .mm-node text,
+          svg g text,
+          svg g > text {
+            fill: #ffffff !important;
+            color: #ffffff !important;
+          }
+          
+          /* Override ANY dark fills */
+          svg [fill="#000"],
+          svg [fill="#000000"],
+          svg [fill="black"],
+          svg [fill="#111"],
+          svg [fill="#222"],
+          svg [fill="#333"],
+          svg [fill="#444"],
+          svg [fill="#555"] {
+            fill: #ffffff !important;
+          }
+        `}</style>
+        <svg 
+          ref={svgRef} 
+          style={{ 
+            width: '100%', 
+            height: '100%',
+            display: 'block',
+            position: 'absolute',
+            top: 0,
+            left: 0
+          }} 
+        />
       </div>
       {isRendered && (
         <div className="absolute top-2 right-2 flex gap-2">
